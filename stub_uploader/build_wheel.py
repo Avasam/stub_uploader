@@ -191,11 +191,11 @@ class PackageData:
 
     def add_file(self, package: str, filename: str, file_contents: str) -> None:
         """Add a file to a package."""
-        top_level = package.split(".")[0]
+        top_level, *sub_packages = package.split(".")
         entry_path = self.package_path(package)
         entry_path.mkdir(exist_ok=True)
         (entry_path / filename).write_text(file_contents)
-        self.package_data[top_level].append(filename)
+        self.package_data[top_level].append(os.path.join(*sub_packages, filename))
 
 
 def is_namespace_package(path: Path) -> bool:
@@ -260,7 +260,7 @@ def ensure_suffix(s: str, suffix: str) -> str:
     return s if s.endswith(suffix) else s + suffix
 
 
-def copy_changelog(distribution: str, dst: str) -> None:
+def copy_changelog(distribution: str, dst: Path | str) -> None:
     """Copy changelog to the build directory."""
     try:
         shutil.copy(
@@ -395,7 +395,7 @@ def generate_long_description(
 
 def main(
     typeshed_dir: str, distribution: str, version: str, build_dir: Optional[str] = None
-) -> str:
+) -> Path:
     """Generate a wheel for a third-party distribution in typeshed.
 
     Return the path to directory where wheel is created.
@@ -405,10 +405,7 @@ def main(
     """
     ts_data = read_typeshed_data(Path(typeshed_dir))
     build_data = BuildData(typeshed_dir, distribution)
-    if build_dir:
-        tmpdir = build_dir
-    else:
-        tmpdir = tempfile.mkdtemp()
+    tmpdir = Path(build_dir or tempfile.mkdtemp())
     commit = subprocess.run(
         ["git", "rev-parse", "HEAD"],
         capture_output=True,
@@ -416,16 +413,16 @@ def main(
         cwd=typeshed_dir,
     ).stdout.strip()
     metadata = read_metadata(typeshed_dir, distribution)
-    with open(os.path.join(tmpdir, "setup.py"), "w") as f:
+    with open(tmpdir / "setup.py", "w") as f:
         f.write(generate_setup_file(build_data, ts_data, metadata, version, commit))
-    copy_stubs(build_data.stub_dir, Path(tmpdir))
+    copy_stubs(build_data.stub_dir, tmpdir)
     copy_changelog(distribution, tmpdir)
     current_dir = os.getcwd()
     os.chdir(tmpdir)
     subprocess.run([sys.executable, "setup.py", "bdist_wheel"])
     subprocess.run([sys.executable, "setup.py", "sdist"])
     os.chdir(current_dir)
-    return f"{tmpdir}/dist"
+    return tmpdir / "dist"
 
 
 if __name__ == "__main__":

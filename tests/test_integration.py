@@ -4,9 +4,10 @@ anything on PyPI, but can make PyPI queries and may expect
 a typeshed checkout side by side.
 """
 
+import ast
 import os
-from pathlib import Path
 import re
+from pathlib import Path
 
 import pytest
 from packaging.requirements import Requirement
@@ -42,8 +43,38 @@ def test_fetch_pypi_versions() -> None:
 def test_build_wheel(distribution: str) -> None:
     """Check that we can build wheels for all distributions."""
     tmp_dir = build_wheel.main(TYPESHED, distribution, version="1.1.1")
-    assert tmp_dir.endswith("/dist")
+    assert tmp_dir.name == "dist"
     assert list(os.listdir(tmp_dir))  # check it is not empty
+    # Validate
+    with open(tmp_dir.parent / "setup.py") as setup_content:
+        module = ast.parse(setup_content.read())
+        setup_method = next(filter(lambda x: type(x) == ast.Expr, module.body))
+        assert isinstance(setup_method, ast.Expr)
+        assert isinstance(setup_method.value, ast.Call)
+        package_data_keyword = next(
+            filter(lambda x: x.arg == "package_data", setup_method.value.keywords)
+        )
+        # package_data: dict[str, list[str]] = eval(
+        #     compile(
+        #         ast.Expression(package_data_keyword.value), "<ast expression>", "eval"
+        #     )
+        # )
+        # for top_level, files in package_data.items():
+        #     for file in files:
+        #         assert (tmp_dir.parent / top_level / file).exists()
+        assert isinstance(package_data_keyword.value, ast.Dict)
+        package_data = dict(
+            zip(package_data_keyword.value.keys, package_data_keyword.value.values)
+        )
+        for top_level, files in package_data.items():
+            assert isinstance(top_level, ast.Constant)
+            assert isinstance(files, ast.List)
+            for file in files.elts:
+                assert isinstance(file, ast.Constant)
+                file_to_find = tmp_dir.parent / top_level.value / file.value
+                assert (
+                    file_to_find.exists()
+                ), f"'{file_to_find}' is in 'package_data' but not found on disk"
 
 
 @pytest.mark.parametrize("distribution", os.listdir(THIRD_PARTY_PATH))
